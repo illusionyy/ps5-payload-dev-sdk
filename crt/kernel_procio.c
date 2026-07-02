@@ -62,6 +62,21 @@ kernel_virt2phys(unsigned long pml4u, unsigned long cr3, unsigned long vaddr,
   return -1;
 }
 
+void* malloc(unsigned long);
+void free(void*);
+void perror(const char*);
+
+static int
+check_fault_address(int pid, unsigned long addr, unsigned long len) {
+  void *tmp;
+  if(!(tmp=malloc(len))) {
+    perror("malloc");
+    return -1;
+  }
+  int res = mdbg_copyout(pid, addr, tmp, len);
+  free(tmp);
+  return res;
+}
 
 int
 kernel_proc_copyin(int pid, const void *buf, unsigned long addr,
@@ -76,6 +91,12 @@ kernel_proc_copyin(int pid, const void *buf, unsigned long addr,
   // lets see if we can just use mdbg
   if(!mdbg_copyin(pid, buf, addr, len)) {
     return 0;
+  }
+
+  // make sure the target has the addr faulted in
+  if(check_fault_address(pid, addr, len)) {
+    perror("check_fault_address");
+    return -1;
   }
 
   if(!(proc=kernel_get_proc(pid))) {
