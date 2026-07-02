@@ -536,10 +536,13 @@ kernel_copyin(const void *uaddr, unsigned long kaddr, unsigned long len) {
   }
 
   // Set pipe flags
+  // `write_buf.flags.reserved[0]` is set to not have an empty buffer
+  // https://github.com/PS5Dev/PS5SDK/blob/a2e03a2a0231a3a3397fa6cd087a01ca6d04f273/crt/kernel_helpers.c#L49
+  // https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/netinet6/ip6_output.c#L2685
   write_buf.flags.cnt = 0;
-  write_buf.flags.in = 0x40000000;
+  write_buf.flags.in = 0;
   write_buf.flags.out = 0;
-  write_buf.flags.reserved[0] = 0; // set by next kernel_write
+  write_buf.flags.reserved[0] = 0x40000000; // set by next kernel_write
   write_buf.flags.reserved[1] = 0; // set by next kernel_write
 
   if(kernel_write(pipe_addr, &write_buf, sizeof(write_buf))) {
@@ -577,6 +580,8 @@ kernel_copyout(unsigned long kaddr, void *uaddr, unsigned long len) {
   write_buf.flags.cnt = 0x40000000;
   write_buf.flags.in = 0x40000000;
   write_buf.flags.out = 0;
+  // https://github.com/PS5Dev/PS5SDK/blob/a2e03a2a0231a3a3397fa6cd087a01ca6d04f273/crt/kernel_helpers.c#L70
+  // not required as cnt, in are already set, so there's some data in this buffer
   write_buf.flags.reserved[0] = 0; // set by next kernel_write
   write_buf.flags.reserved[1] = 0; // set by next kernel_write
 
